@@ -34,7 +34,7 @@ Since this application requires access to protected system logs, you must grant 
 ### Step 1: Clone the repository
 
 ```bash
-git clone https://github.com/SEU_NICK_AQUI/PrivacyClipboard-Sentinel.git
+git clone https:https://github.com/Sitr3n01/PrivacyClipboard-Sentinel.git
 ```
 
 ### Step 2: Build and Install
@@ -91,7 +91,7 @@ If you're setting up this repository for the first time, use these commands:
 
 5. **Connect to remote repository:**
    ```bash
-   git remote add origin https://github.com/SEU_NICK_AQUI/NOME_DO_REPO.git
+   git remote add origin https://github.com/Sitr3n01/PrivacyClipboard-Sentinel.git
    ```
 
 6. **Push to GitHub:**
