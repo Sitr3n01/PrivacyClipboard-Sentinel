@@ -34,7 +34,7 @@ Since this application requires access to protected system logs, you must grant 
 ### Step 1: Clone the repository
 
 ```bash
-git clone https:https://github.com/Sitr3n01/PrivacyClipboard-Sentinel.git
+git clone https://github.com/Sitr3n01/PrivacyClipboard-Sentinel.git
 ```
 
 ### Step 2: Build and Install
