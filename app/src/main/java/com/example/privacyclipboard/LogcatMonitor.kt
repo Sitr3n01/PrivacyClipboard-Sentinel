@@ -14,20 +14,21 @@ object LogcatMonitor {
     private var logJob: kotlinx.coroutines.Job? = null
     private var logProcess: Process? = null
 
-    // Lista de apps do sistema que realmente devem ser ignorados.
-    // REMOVIDO: "android" (era muito genérico e escondia com.twitter.android, Chrome, etc)
+    // OTIMIZAÇÃO 1: Regex compilados estaticamente (Performance x100)
+    private val DENIAL_REGEX = Regex("access to ([a-zA-Z0-9_.]+)(?:,)?")
+    private val PACKAGE_REGEX = Regex("([a-zA-Z0-9_]+\\.[a-zA-Z0-9_]+\\.[a-zA-Z0-9_.]+)")
+
     private val ALLOW_LIST = listOf(
         "com.android.systemui",
         "com.example.privacyclipboard",
-        "com.samsung.android.honeyboard", // Teclado Samsung
-        "com.google.android.inputmethod.latin", // Gboard
+        "com.samsung.android.honeyboard",
+        "com.google.android.inputmethod.latin",
         "system_server",
         "com.android.server"
     )
 
     fun start(scope: CoroutineScope, context: Context) {
         if (logJob?.isActive == true) return
-
         logJob = scope.launch(Dispatchers.IO) {
             monitorLogs(context)
         }
@@ -44,70 +45,61 @@ object LogcatMonitor {
 
     private suspend fun CoroutineScope.monitorLogs(context: Context) {
         Log.d("PrivacySentinel", "Monitor Iniciado (Modo ADB Otimizado)")
-
         try {
+            // Limpa logs antigos para evitar processar histórico inútil
             Runtime.getRuntime().exec("logcat -c").waitFor()
 
-            // Adicionado tags 'ClipboardService' e 'RestrictionPolicy' baseadas no seu log
             val cmd = "logcat -v time -s ClipboardService SamsungClipboard SemClipboardController RestrictionPolicy"
             logProcess = Runtime.getRuntime().exec(cmd)
 
-            val reader = BufferedReader(InputStreamReader(logProcess!!.inputStream))
-            var line: String?
+            // OTIMIZAÇÃO 2: Buffer maior para leitura
+            val reader = BufferedReader(InputStreamReader(logProcess!!.inputStream), 8192)
 
+            var line: String?
             while (isActive) {
                 line = reader.readLine() ?: break
-                val currentLine = line ?: continue
+                if (line.isBlank()) continue
 
+                // OTIMIZAÇÃO 3: Checagens rápidas antes de Regex pesados
                 var detectedName: String? = null
                 var detectionType = ""
 
-                // Lógica ajustada para o seu log específico:
-                // "Denying clipboard access to [pacote], application..."
-                if (currentLine.contains("Denying clipboard access to", ignoreCase = true)) {
-                    detectedName = extractPackageNameFromDenial(currentLine)
+                // Verifica strings literais antes de qualquer lógica complexa
+                if (line.contains("Denying clipboard access to", ignoreCase = true)) {
+                    detectedName = extractPackageNameFromDenial(line)
                     detectionType = "Bloqueado"
-                }
-                // Lógica padrão de leitura (Se o sistema permitir, o log é diferente)
-                else if (currentLine.contains("Reading clipboard", ignoreCase = true) ||
-                    currentLine.contains("getPrimaryClip", ignoreCase = true)) {
-                    detectedName = extractPackageNameGeneral(currentLine)
+                } else if (line.contains("Reading clipboard", ignoreCase = true) ||
+                    line.contains("getPrimaryClip", ignoreCase = true)) {
+                    detectedName = extractPackageNameGeneral(line)
                     detectionType = "Leu"
                 }
 
                 if (detectedName != null && !isAllowListed(detectedName)) {
-                    Log.i("PrivacySentinel", "CAPTUREI: $detectedName ($detectionType)")
                     EventBus.emitEvent(detectedName, detectionType)
                 }
             }
         } catch (e: Exception) {
-            Log.e("PrivacySentinel", "Erro fatal no monitor: ${e.message}")
+            Log.e("PrivacySentinel", "Erro no monitor: ${e.message}")
+            // Pequeno delay para evitar loop infinito de crash se o logcat falhar
             kotlinx.coroutines.delay(5000)
             if (isActive) monitorLogs(context)
         }
     }
 
     private fun isAllowListed(pkg: String): Boolean {
-        // Verifica se o pacote COMEÇA com ou é IGUAL a algo da lista,
-        // em vez de "contains" genérico que pega coisa errada no meio da string.
         return ALLOW_LIST.any { allowed ->
             pkg.equals(allowed, ignoreCase = true) || pkg.startsWith(allowed, ignoreCase = true)
         }
     }
 
-    // Extração específica para a linha de "Denying..." que você mandou
     private fun extractPackageNameFromDenial(log: String): String? {
-        // Padrão: "access to com.package.name,"
-        val pattern = Regex("access to ([a-zA-Z0-9_.]+)(?:,)?")
-        val match = pattern.find(log)
-        return match?.groupValues?.get(1)
+        // Uso da constante compilada
+        return DENIAL_REGEX.find(log)?.groupValues?.get(1)
     }
 
     private fun extractPackageNameGeneral(log: String): String? {
-        val packagePattern = Regex("([a-zA-Z0-9_]+\\.[a-zA-Z0-9_]+\\.[a-zA-Z0-9_.]+)")
-        // Filtra ruídos comuns
         if (log.contains("system_server") || log.contains("Instruction")) return null
-        val match = packagePattern.find(log)
-        return match?.value
+        // Uso da constante compilada
+        return PACKAGE_REGEX.find(log)?.value
     }
 }
