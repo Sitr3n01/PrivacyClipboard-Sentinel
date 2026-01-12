@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -14,7 +15,7 @@ object LogcatMonitor {
     private var logJob: kotlinx.coroutines.Job? = null
     private var logProcess: Process? = null
 
-    // OTIMIZAÇÃO 1: Regex compilados estaticamente (Performance x100)
+    // OTIMIZAÇÃO 1: Regex compilados estaticamente (Mantido)
     private val DENIAL_REGEX = Regex("access to ([a-zA-Z0-9_.]+)(?:,)?")
     private val PACKAGE_REGEX = Regex("([a-zA-Z0-9_]+\\.[a-zA-Z0-9_]+\\.[a-zA-Z0-9_.]+)")
 
@@ -45,44 +46,54 @@ object LogcatMonitor {
 
     private suspend fun CoroutineScope.monitorLogs(context: Context) {
         Log.d("PrivacySentinel", "Monitor Iniciado (Modo ADB Otimizado)")
-        try {
-            // Limpa logs antigos para evitar processar histórico inútil
-            Runtime.getRuntime().exec("logcat -c").waitFor()
 
-            val cmd = "logcat -v time -s ClipboardService SamsungClipboard SemClipboardController RestrictionPolicy"
-            logProcess = Runtime.getRuntime().exec(cmd)
+        // CORREÇÃO CRÍTICA: Loop externo substitui a recursão.
+        // Isso impede que a pilha de memória estoure se o logcat falhar repetidamente.
+        while (isActive) {
+            try {
+                // Limpa logs antigos
+                Runtime.getRuntime().exec("logcat -c").waitFor()
 
-            // OTIMIZAÇÃO 2: Buffer maior para leitura
-            val reader = BufferedReader(InputStreamReader(logProcess!!.inputStream), 8192)
+                val cmd = "logcat -v time -s ClipboardService SamsungClipboard SemClipboardController RestrictionPolicy"
+                logProcess = Runtime.getRuntime().exec(cmd)
 
-            var line: String?
-            while (isActive) {
-                line = reader.readLine() ?: break
-                if (line.isBlank()) continue
+                // OTIMIZAÇÃO 2: Buffer mantido
+                val reader = BufferedReader(InputStreamReader(logProcess!!.inputStream), 8192)
 
-                // OTIMIZAÇÃO 3: Checagens rápidas antes de Regex pesados
-                var detectedName: String? = null
-                var detectionType = ""
+                var line: String?
 
-                // Verifica strings literais antes de qualquer lógica complexa
-                if (line.contains("Denying clipboard access to", ignoreCase = true)) {
-                    detectedName = extractPackageNameFromDenial(line)
-                    detectionType = "Bloqueado"
-                } else if (line.contains("Reading clipboard", ignoreCase = true) ||
-                    line.contains("getPrimaryClip", ignoreCase = true)) {
-                    detectedName = extractPackageNameGeneral(line)
-                    detectionType = "Leu"
+                // Loop de leitura do processo atual
+                while (isActive) {
+                    line = reader.readLine() ?: break // Sai do loop interno se o processo morrer
+                    if (line.isBlank()) continue
+
+                    // OTIMIZAÇÃO 3: Lógica mantida
+                    var detectedName: String? = null
+                    var detectionType = ""
+
+                    if (line.contains("Denying clipboard access to", ignoreCase = true)) {
+                        detectedName = extractPackageNameFromDenial(line)
+                        detectionType = "Bloqueado"
+                    } else if (line.contains("Reading clipboard", ignoreCase = true) ||
+                        line.contains("getPrimaryClip", ignoreCase = true)) {
+                        detectedName = extractPackageNameGeneral(line)
+                        detectionType = "Leu"
+                    }
+
+                    if (detectedName != null && !isAllowListed(detectedName)) {
+                        EventBus.emitEvent(detectedName, detectionType)
+                    }
                 }
-
-                if (detectedName != null && !isAllowListed(detectedName)) {
-                    EventBus.emitEvent(detectedName, detectionType)
-                }
+            } catch (e: Exception) {
+                Log.e("PrivacySentinel", "Erro no monitor (Reiniciando): ${e.message}")
+                // Garante limpeza antes de tentar de novo
+                try { logProcess?.destroy() } catch (_: Exception) {}
             }
-        } catch (e: Exception) {
-            Log.e("PrivacySentinel", "Erro no monitor: ${e.message}")
-            // Pequeno delay para evitar loop infinito de crash se o logcat falhar
-            kotlinx.coroutines.delay(5000)
-            if (isActive) monitorLogs(context)
+
+            // CORREÇÃO: Delay seguro antes de reiniciar o loop while
+            if (isActive) {
+                delay(5000)
+            }
         }
     }
 
@@ -93,13 +104,11 @@ object LogcatMonitor {
     }
 
     private fun extractPackageNameFromDenial(log: String): String? {
-        // Uso da constante compilada
         return DENIAL_REGEX.find(log)?.groupValues?.get(1)
     }
 
     private fun extractPackageNameGeneral(log: String): String? {
         if (log.contains("system_server") || log.contains("Instruction")) return null
-        // Uso da constante compilada
         return PACKAGE_REGEX.find(log)?.value
     }
 }

@@ -5,8 +5,10 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.privacyclipboard.database.AppDatabase
 import com.example.privacyclipboard.database.ClipboardEvent
@@ -15,23 +17,30 @@ import java.util.concurrent.ConcurrentHashMap
 
 class MonitorService : Service() {
 
-    private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    // CORREÇÃO 1: Handler para capturar erros fatais em corrotinas sem derrubar o app
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e("MonitorService", "Erro crítico em corrotina: ${throwable.message}")
+    }
+
+    // Escopo atualizado com o handler
+    private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob() + exceptionHandler)
+
     private val pendingNotifications = ConcurrentHashMap<String, String>()
     private var notificationJob: Job? = null
 
-    // FONTE DA VERDADE PARA A UI
     companion object {
         var isServiceActive = false
     }
 
     override fun onCreate() {
         super.onCreate()
-        isServiceActive = true // Marca como ativo ao criar
+        isServiceActive = true
         startForegroundService()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         isServiceActive = true
+        // Reinicia o monitor se necessário, o escopo agora é seguro
         LogcatMonitor.start(serviceScope, this)
         observeEvents()
         return START_STICKY
@@ -46,16 +55,18 @@ class MonitorService : Service() {
     }
 
     private fun handleEvent(appName: String, type: String) {
-        // Salva no banco
         serviceScope.launch(Dispatchers.IO) {
-            val database = AppDatabase.getDatabase(applicationContext)
-            val historyText = if (type == "Bloqueado") "Tentou ler (Bloqueado)" else "Leu seu Clipboard"
-            database.clipboardDao().insert(
-                ClipboardEvent(appName = appName, contentType = historyText)
-            )
+            try {
+                val database = AppDatabase.getDatabase(applicationContext)
+                val historyText = if (type == "Bloqueado") "Tentou ler (Bloqueado)" else "Leu seu Clipboard"
+                database.clipboardDao().insert(
+                    ClipboardEvent(appName = appName, contentType = historyText)
+                )
+            } catch (e: Exception) {
+                Log.e("MonitorService", "Falha ao salvar no banco: ${e.message}")
+            }
         }
 
-        // Agrupa notificações (Debounce de 1.5s)
         pendingNotifications[appName] = type
 
         if (notificationJob?.isActive != true) {
@@ -88,7 +99,6 @@ class MonitorService : Service() {
         val appsList = pendingNotifications.keys.toList()
         val count = appsList.size
 
-        // Título mais impactante
         val title = if (count == 1) "Sentinela: ${appsList[0]}" else "Sentinela: $count Apps Detectados"
 
         val inboxStyle = NotificationCompat.InboxStyle()
@@ -100,7 +110,8 @@ class MonitorService : Service() {
         val intent = Intent(this, MainActivity::class.java)
         intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         val pendingIntent = PendingIntent.getActivity(
-            this, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            this, 0, intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
         val notification = NotificationCompat.Builder(this, channelId)
@@ -118,7 +129,7 @@ class MonitorService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        isServiceActive = false // Marca como inativo ao destruir
+        isServiceActive = false
         LogcatMonitor.stop()
         serviceScope.cancel()
     }
@@ -140,6 +151,21 @@ class MonitorService : Service() {
             .setOngoing(true)
             .build()
 
-        startForeground(1, notification)
+        // CORREÇÃO 2: Especificar ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        // Obrigatório para Android 14+ (S25 Ultra) para evitar crash de SecurityException
+        if (Build.VERSION.SDK_INT >= 34) { // Android 14 (Upside Down Cake)
+            try {
+                startForeground(
+                    1,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } catch (e: Exception) {
+                // Fallback caso o tipo não esteja no manifesto, tenta sem tipo (pode gerar erro no log, mas tenta manter vivo)
+                startForeground(1, notification)
+            }
+        } else {
+            startForeground(1, notification)
+        }
     }
 }
