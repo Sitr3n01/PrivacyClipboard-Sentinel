@@ -99,12 +99,26 @@ class MonitorService : Service() {
         val appsList = pendingNotifications.keys.toList()
         val count = appsList.size
 
-        val title = if (count == 1) "Sentinela: ${appsList[0]}" else "Sentinela: $count Apps Detectados"
+        // Separa apps bloqueados e aprovados
+        val bloqueados = appsList.filter { pendingNotifications[it] == "Bloqueado" }
+        val aprovados = appsList.filter { pendingNotifications[it] == "Leu" }
+
+        val title = when {
+            count == 1 && bloqueados.isNotEmpty() -> "Bloqueado: ${appsList[0]}"
+            count == 1 && aprovados.isNotEmpty() -> "Acesso Permitido: ${appsList[0]}"
+            else -> "Sentinela: $count Apps Detectados"
+        }
 
         val inboxStyle = NotificationCompat.InboxStyle()
-        appsList.forEach { app ->
-            val type = pendingNotifications[app]
-            inboxStyle.addLine("• $app ($type)")
+
+        // Mostra apps bloqueados primeiro
+        bloqueados.forEach { app ->
+            inboxStyle.addLine("• $app (Bloqueado)")
+        }
+
+        // Depois mostra apps que conseguiram ler (apps em primeiro plano/aprovados)
+        aprovados.forEach { app ->
+            inboxStyle.addLine("• $app (Acesso Permitido)")
         }
 
         val intent = Intent(this, MainActivity::class.java)
