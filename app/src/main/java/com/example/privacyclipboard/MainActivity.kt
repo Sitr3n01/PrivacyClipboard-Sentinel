@@ -314,18 +314,7 @@ fun HistoryItem(event: ClipboardEvent) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Emoji indicador visual
-            Text(
-                text = when {
-                    isBloqueado -> "🚫"
-                    isAprovado -> "✓"
-                    else -> "⚠️"
-                },
-                fontSize = 18.sp,
-                modifier = Modifier.size(20.dp)
-            )
-
-            Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = event.appName,
                     fontWeight = FontWeight.SemiBold,
