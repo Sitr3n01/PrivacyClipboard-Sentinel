@@ -295,9 +295,18 @@ fun StatsCard(stats: List<AppStats>) {
 
 @Composable
 fun HistoryItem(event: ClipboardEvent) {
+    val isBloqueado = event.contentType.contains("Bloqueado")
+    val isAprovado = event.contentType.contains("Leu seu Clipboard")
+
     Card(
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                isBloqueado -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                isAprovado -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            }
+        ),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -305,10 +314,14 @@ fun HistoryItem(event: ClipboardEvent) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.Default.Warning,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.tertiary,
+            // Emoji indicador visual
+            Text(
+                text = when {
+                    isBloqueado -> "🚫"
+                    isAprovado -> "✓"
+                    else -> "⚠️"
+                },
+                fontSize = 18.sp,
                 modifier = Modifier.size(20.dp)
             )
 
@@ -320,10 +333,18 @@ fun HistoryItem(event: ClipboardEvent) {
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = event.contentType,
+                    text = when {
+                        isBloqueado -> "Tentou ler (Bloqueado)"
+                        isAprovado -> "Acesso Permitido (Em primeiro plano)"
+                        else -> event.contentType
+                    },
                     fontSize = 12.sp,
-                    color = if (event.contentType.contains("Bloqueado"))
-                        MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = when {
+                        isBloqueado -> MaterialTheme.colorScheme.error
+                        isAprovado -> Color(0xFF2E7D32) // Verde escuro para aprovado
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    fontWeight = if (isAprovado) FontWeight.Medium else FontWeight.Normal
                 )
             }
 
