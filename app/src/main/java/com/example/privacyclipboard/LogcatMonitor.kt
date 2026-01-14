@@ -29,9 +29,10 @@ object LogcatMonitor {
         "com.android.server"
     )
 
-    // OTIMIZAÇÃO 3: Throttling para prevenir sobrecarga durante burst de eventos
-    private var lastEventTime = 0L
-    private const val MIN_EVENT_INTERVAL_MS = 50L // Máximo 20 eventos/segundo
+    // OTIMIZAÇÃO 3: Throttling POR APP para prevenir sobrecarga durante burst de eventos
+    // Chave: nome do app, Valor: último timestamp que emitiu evento
+    private val lastEventTimePerApp = mutableMapOf<String, Long>()
+    private const val MIN_EVENT_INTERVAL_MS = 1000L // 1 segundo entre eventos do MESMO app
 
     fun start(scope: CoroutineScope, context: Context) {
         if (logJob?.isActive == true) return
@@ -88,11 +89,16 @@ object LogcatMonitor {
                     }
 
                     if (detectedName != null && !isAllowListed(detectedName)) {
-                        // OTIMIZAÇÃO 6: Throttling para prevenir sobrecarga
+                        // OTIMIZAÇÃO 6: Throttling POR APP para prevenir spam
                         val currentTime = System.currentTimeMillis()
-                        if (currentTime - lastEventTime >= MIN_EVENT_INTERVAL_MS) {
+                        val lastTime = lastEventTimePerApp[detectedName] ?: 0L
+
+                        // Permite evento se:
+                        // 1. É a primeira vez que o app aparece
+                        // 2. Passou mais de 1 segundo desde o último evento DESTE app
+                        if (currentTime - lastTime >= MIN_EVENT_INTERVAL_MS) {
                             EventBus.emitEvent(detectedName, detectionType)
-                            lastEventTime = currentTime
+                            lastEventTimePerApp[detectedName] = currentTime
                             eventCount++
 
                             if (eventCount % 100 == 0) {
