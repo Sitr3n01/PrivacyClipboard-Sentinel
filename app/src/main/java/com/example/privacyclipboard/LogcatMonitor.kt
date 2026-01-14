@@ -19,8 +19,7 @@ object LogcatMonitor {
     private val DENIAL_REGEX = Regex("access to ([a-zA-Z0-9_.]+)(?:,)?")
     private val PACKAGE_REGEX = Regex("([a-zA-Z0-9_]+\\.[a-zA-Z0-9_]+\\.[a-zA-Z0-9_.]+)")
 
-    // OTIMIZAÇÃO 2: HashSet para busca O(1) ao invés de List O(n)
-    private val ALLOW_LIST = setOf(
+    private val ALLOW_LIST = listOf(
         "com.android.systemui",
         "com.example.privacyclipboard",
         "com.samsung.android.honeyboard",
@@ -28,10 +27,6 @@ object LogcatMonitor {
         "system_server",
         "com.android.server"
     )
-
-    // OTIMIZAÇÃO 3: Throttling para prevenir sobrecarga durante burst de eventos
-    private var lastEventTime = 0L
-    private const val MIN_EVENT_INTERVAL_MS = 50L // Máximo 20 eventos/segundo
 
     fun start(scope: CoroutineScope, context: Context) {
         if (logJob?.isActive == true) return
@@ -55,7 +50,6 @@ object LogcatMonitor {
         // CORREÇÃO CRÍTICA: Loop externo substitui a recursão.
         // Isso impede que a pilha de memória estoure se o logcat falhar repetidamente.
         while (isActive) {
-            var reader: BufferedReader? = null
             try {
                 // Limpa logs antigos
                 Runtime.getRuntime().exec("logcat -c").waitFor()
@@ -63,18 +57,17 @@ object LogcatMonitor {
                 val cmd = "logcat -v time -s ClipboardService SamsungClipboard SemClipboardController RestrictionPolicy"
                 logProcess = Runtime.getRuntime().exec(cmd)
 
-                // OTIMIZAÇÃO 4: Buffer mantido
-                reader = BufferedReader(InputStreamReader(logProcess!!.inputStream), 8192)
+                // OTIMIZAÇÃO 2: Buffer mantido
+                val reader = BufferedReader(InputStreamReader(logProcess!!.inputStream), 8192)
 
                 var line: String?
-                var eventCount = 0 // Contador de eventos para debug
 
                 // Loop de leitura do processo atual
                 while (isActive) {
                     line = reader.readLine() ?: break // Sai do loop interno se o processo morrer
                     if (line.isBlank()) continue
 
-                    // OTIMIZAÇÃO 5: Lógica mantida com melhorias
+                    // OTIMIZAÇÃO 3: Lógica mantida
                     var detectedName: String? = null
                     var detectionType = ""
 
@@ -88,30 +81,13 @@ object LogcatMonitor {
                     }
 
                     if (detectedName != null && !isAllowListed(detectedName)) {
-                        // OTIMIZAÇÃO 6: Throttling para prevenir sobrecarga
-                        val currentTime = System.currentTimeMillis()
-                        if (currentTime - lastEventTime >= MIN_EVENT_INTERVAL_MS) {
-                            EventBus.emitEvent(detectedName, detectionType)
-                            lastEventTime = currentTime
-                            eventCount++
-
-                            if (eventCount % 100 == 0) {
-                                Log.d("PrivacySentinel", "Eventos processados: $eventCount")
-                            }
-                        }
+                        EventBus.emitEvent(detectedName, detectionType)
                     }
                 }
             } catch (e: Exception) {
-                Log.e("PrivacySentinel", "Erro no monitor (Reiniciando): ${e.message}", e)
+                Log.e("PrivacySentinel", "Erro no monitor (Reiniciando): ${e.message}")
                 // Garante limpeza antes de tentar de novo
                 try { logProcess?.destroy() } catch (_: Exception) {}
-            } finally {
-                // CORREÇÃO CRÍTICA: Fecha o BufferedReader para evitar vazamento de recursos
-                try {
-                    reader?.close()
-                } catch (e: Exception) {
-                    Log.w("PrivacySentinel", "Erro ao fechar reader: ${e.message}")
-                }
             }
 
             // CORREÇÃO: Delay seguro antes de reiniciar o loop while
@@ -122,17 +98,9 @@ object LogcatMonitor {
     }
 
     private fun isAllowListed(pkg: String): Boolean {
-        // OTIMIZAÇÃO 7: Busca otimizada com HashSet - O(1) ao invés de O(n)
-        val pkgLower = pkg.lowercase()
-
-        // Verifica correspondência exata primeiro (O(1))
-        if (ALLOW_LIST.any { it.lowercase() == pkgLower }) {
-            return true
+        return ALLOW_LIST.any { allowed ->
+            pkg.equals(allowed, ignoreCase = true) || pkg.startsWith(allowed, ignoreCase = true)
         }
-
-        // Verifica se começa com algum prefixo da allow-list
-        // Ainda O(n) mas n é pequeno (6 itens) e muito mais rápido que antes
-        return ALLOW_LIST.any { pkgLower.startsWith(it.lowercase()) }
     }
 
     private fun extractPackageNameFromDenial(log: String): String? {
